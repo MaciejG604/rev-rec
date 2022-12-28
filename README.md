@@ -9,6 +9,12 @@ This project deals with optimal recommendations of source code reviewers for ope
 #### The aplication has the following requirements:
 * [Apache Maven](https://maven.apache.org/download.cgi) has to be installed.
 * [JDK](http://www.oracle.com/technetwork/java/javase/downloads/jdk8-downloads-2133151.html) (at least version 8) has to be installed and <i>JAVA_HOME</i> environment variable has to be set and point to the JDK installation.
+* [MySQL server](https://dev.mysql.com/downloads/mysql/) running locally (port number and name of schema is specified in [aplication.properties](src/main/resources/application.properties))
+
 #### Deployment:
 After the aforementioned steps are done, the application can be compiled and launched from its root folder using the following command:
 * `mvn spring-boot:run`
+
+#### Usage:
+Application can be accessed via `/recommend-reviewer` endpoint e.g.:
+`http://localhost:6060/api/recommend-reviewer?project-name=metals&project-url=https://api.github.com/repos/scalameta/metals&pr-id=4669&method=BAYES`

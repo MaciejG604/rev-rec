@@ -23,4 +23,6 @@ public interface PullRequestParser {
     Long getTimeStamp();
 
     void setJsonObject(JsonObject jsonObject);
+
+    void appendToDataFile(String projectName);
 }

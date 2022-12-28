@@ -105,4 +105,7 @@ public class GerritPullRequestParser implements PullRequestParser {
     public void setJsonObject(JsonObject jsonObject) {
         this.jsonObject = jsonObject;
     }
+
+    @Override
+    public void appendToDataFile(String projectName) {}
 }

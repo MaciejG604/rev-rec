@@ -34,8 +34,9 @@ public class GerritService {
     public GerritService(@Autowired ProjectDAO projectDAO,
                          @Value("${recommendation.project}") String project) {
         GerritRestApiFactory gerritRestApiFactory = new GerritRestApiFactory();
-        if(projectDAO.findOne(project) != null){
-            GerritAuthData.Basic authData = new GerritAuthData.Basic(projectDAO.findOne(project).getProjectUrl());
+        if(projectDAO.findById(project).isPresent()){
+            String projectUrl = projectDAO.findById(project).get().getProjectUrl();
+            GerritAuthData.Basic authData = new GerritAuthData.Basic(projectUrl);
             this.gerritApi = gerritRestApiFactory.create(authData);
         }
     }

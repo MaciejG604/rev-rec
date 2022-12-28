@@ -28,9 +28,12 @@ import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /**
  * This class is used to load data from different sources and stores them in the database.
@@ -66,11 +69,17 @@ public class DataLoader {
     private String projectUrl;
 
     public void fetchData(String projectName, String projectUrl) throws UnirestException {
+        File dataFile = new File("rev-rec-data" + File.separator + projectName + ".json");
+
+        try {
+            Files.delete(dataFile.toPath());
+        } catch (IOException ignored) {}
+
         this.projectName = projectName;
         this.projectUrl = projectUrl;
 
         int tokenIndex = 0;
-        String[] tokens = {""};  //insert valid github tokens
+        String[] tokens = {"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"};  //insert valid github tokens
 
         Project project = createIfNotExist(projectName, projectUrl);
         boolean isGit = projectUrl.contains("github");
@@ -81,21 +90,22 @@ public class DataLoader {
         Unirest.setHttpClient(httpclient);
 
         int start = 0;
-        int iteration = 0;
+        int iteration = 6;
         int totalPullsInOneRequest = 100;
         int processedPullRequests = 0;
         try {
             do {
                 String json = "";
-                gitHubToken = tokens[tokenIndex % 4];
+                gitHubToken = tokens[0];
                 try {
                     PullRequestParser pullRequestParser;
 
                     if (isGit) {
                         HttpResponse<String> jsonResponse = Unirest.get(projectUrl + "/pulls")
                                 .queryString("state", "closed")
+                                .queryString("per_page", totalPullsInOneRequest)
                                 .queryString("page", iteration + 1)
-                                .queryString("access_token", gitHubToken)
+                                .header("Authorization", "token " + gitHubToken)
                                 .asString();
                         json = jsonResponse.getBody();
                         pullRequestParser = gitHubPullRequestParser;
@@ -117,7 +127,7 @@ public class DataLoader {
                         pullRequestParser = gerritPullRequestParser;
                     }
 
-                    for (int x = 0; x < (isGit ? 30 : totalPullsInOneRequest); x++) {
+                    for (int x = 0; x < totalPullsInOneRequest; x++) {
 
                         processedPullRequests = (iteration * totalPullsInOneRequest) + x + start;
                         JsonObject jsonObject = null;
@@ -134,14 +144,21 @@ public class DataLoader {
                         }
 
                         pullRequestParser.setJsonObject(jsonObject);
-                        process(pullRequestParser, project);
-                        System.out.println(iteration);
+                        process(pullRequestParser, project, true);
+                        System.out.print(processedPullRequests);
+                        System.out.print(", ");
                     }
+                    System.out.print("\n");
                     iteration++;
                 } catch (NullPointerException | ClassCastException ex) {
                     if (isGit) {
                         tokenIndex++;
-                        System.out.println("Token has changed!");
+                        System.out.println("Request rate limit reached, wait for 1 hour");
+                        try {
+                            TimeUnit.HOURS.sleep(1);
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        }
                     } else {
                         throw ex;
                     }
@@ -153,10 +170,73 @@ public class DataLoader {
             logger.error(ex.getMessage());
         }
 
-
+        try {
+            Files.write(dataFile.toPath(), new byte[]{']'});
+        } catch (IOException ignored) {}
     }
 
-    private PullRequest process(PullRequestParser pullRequestParser, Project project) {
+    public Optional<PullRequest> fetchPullRequest(String prChangeId, String projectName, String projectUrl) throws UnirestException {
+        this.projectName = projectName;
+        this.projectUrl = projectUrl;
+
+        String token = "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";
+
+        Project project = createIfNotExist(projectName, projectUrl);
+        boolean isGit = projectUrl.contains("github");
+
+        RequestConfig globalConfig = RequestConfig.custom()
+                .setCookieSpec(CookieSpecs.IGNORE_COOKIES).build();
+        HttpClient httpclient = HttpClients.custom().setDefaultRequestConfig(globalConfig).build();
+        Unirest.setHttpClient(httpclient);
+
+        int start = 0;
+        int iteration = 0;
+        int totalPullsInOneRequest = 100;
+        int processedPullRequests = 0;
+        try {
+            String json = "";
+            gitHubToken = token;
+            try {
+                PullRequestParser pullRequestParser;
+
+                if (isGit) {
+                    HttpResponse<String> jsonResponse = Unirest.get(projectUrl + "/pulls/" + prChangeId)
+                            .header("Authorization", "token " + gitHubToken)
+                            .asString();
+                    json = jsonResponse.getBody();
+                    pullRequestParser = gitHubPullRequestParser;
+                    gitHubPullRequestParser.setGitHubToken(gitHubToken);
+                    gitHubPullRequestParser.setProjectUrl(projectUrl);
+                } else {
+                    throw new RuntimeException("Only GitHub PR fetching implemented!");
+                }
+
+                for (int x = 0; x < (isGit ? 30 : totalPullsInOneRequest); x++) {
+
+                    processedPullRequests = (iteration * (isGit ? 30 : totalPullsInOneRequest)) + x + start;
+                    JsonObject jsonObject = null;
+                    if (isGit) {
+                        jsonObject = new JsonParser().parse(getGithubPullRequestDetail(
+                                ((JsonObject) new JsonParser().parse(json)).get("number").getAsString())).getAsJsonObject();
+                    } else {
+                        // jsonObject = ((JsonArray) ((JsonArray) new JsonParser().parse(json)).get(0)).get(x).getAsJsonObject();
+                    }
+
+                    pullRequestParser.setJsonObject(jsonObject);
+                    return Optional.ofNullable(processNew(pullRequestParser, project));
+                }
+            } catch (NullPointerException | ClassCastException ex) {
+                System.out.println("Error while fetching PR!");
+            }
+        } catch (ReviewerRecommendationException ex) {
+            logger.info("Processed pull requests: " + processedPullRequests);
+            logger.error(ex.getMessage());
+        }
+
+        return Optional.empty();
+    }
+
+    private PullRequest process(PullRequestParser pullRequestParser, Project project, boolean savePR) {
         PullRequest pr = pullRequestDAO.findByProjectNameAndChangeId(projectName, pullRequestParser.getChangeId());
         PullRequest pullRequest = new PullRequest();
 
@@ -183,15 +263,48 @@ public class DataLoader {
             return null;
         }
 
-        pullRequest = pullRequestDAO.save(pullRequest);
-        Set<FilePath> filePaths = create(pullRequestParser.getFilePaths(), pullRequest);
-        if (filePaths == null) {
-            pullRequestDAO.delete(pullRequest);
+        if (savePR) {
+            pullRequest = pullRequestDAO.save(pullRequest);
+            Set<FilePath> filePaths = create(pullRequestParser.getFilePaths(), pullRequest);
+            if (filePaths == null) {
+                pullRequestDAO.delete(pullRequest);
+            } else {
+                pullRequestParser.appendToDataFile(projectName);
+            }
         }
 
         return pullRequest;
     }
 
+    private PullRequest processNew(PullRequestParser pullRequestParser, Project project) {
+        PullRequest pullRequest = new PullRequest();
+
+        try {
+            pullRequest.setChangeId(pullRequestParser.getChangeId());
+            pullRequest.setChangeNumber(pullRequestParser.getChangeNumber());
+            pullRequest.setSubProject(pullRequestParser.getSubProject());
+            pullRequest.setTimestamp(pullRequestParser.getTimeStamp());
+            pullRequest.setOwner(createIfNotExist(pullRequestParser.getOwner()));
+            pullRequest.setProject(project);
+            pullRequest.setReviewers(createIfNotExist(pullRequestParser.getReviewers()));
+            if (pullRequest.getReviewers().contains(pullRequest.getOwner())) {
+                pullRequest.getReviewers().remove(pullRequest.getOwner());
+            }
+            if (pullRequest.getOwner() == null) {
+                return null;
+            }
+
+            pullRequest.setFilePaths(pullRequestParser.getFilePaths());
+            if (pullRequest.getFilePaths() == null) {
+                return null;
+            }
+        } catch (Exception ex) {
+            logger.error("Parsing exception: " + ex.getMessage());
+            return null;
+        }
+
+        return pullRequest;
+    }
 
     private Developer createIfNotExist(Developer developer) {
         Developer dev = developerDAO.findByAccountIdAndNameAndEmail(developer.getAccountId(), developer.getName(), developer.getEmail());
@@ -215,11 +328,8 @@ public class DataLoader {
     }
 
     private Project createIfNotExist(String projectName, String projectUrl) {
-        Project p = projectDAO.findOne(projectName);
-        if (p == null) {
-            return projectDAO.save(new Project(projectName, projectUrl));
-        }
-        return p;
+        Optional<Project> p = projectDAO.findById(projectName);
+        return p.orElseGet(() -> projectDAO.save(new Project(projectName, projectUrl)));
     }
 
     private Set<FilePath> create(Set<FilePath> filePaths, PullRequest pullRequest) {
@@ -237,7 +347,7 @@ public class DataLoader {
 
     private String getGithubPullRequestDetail(String number) throws UnirestException {
         HttpResponse<String> jsonResponse = Unirest.get(projectUrl + "/pulls/" + number)
-                .queryString("access_token", gitHubToken)
+                .header("Authorization", "token " + gitHubToken)
                 .asString();
         return jsonResponse.getBody();
     }
@@ -246,7 +356,7 @@ public class DataLoader {
         ObjectMapper mapper = new ObjectMapper();
         List<PullRequest> obj = pullRequestDAO.findAll();
 
-        mapper.writeValue(new File("D:" + File.separator + "rev-rec-data" + File.separator + fileName + ".json"), obj);
+        mapper.writeValue(new File("rev-rec-data" + File.separator + fileName + ".json"), obj);
     }
 
     public void initDbFromJson(String projectName, String projectUrl) throws IOException {

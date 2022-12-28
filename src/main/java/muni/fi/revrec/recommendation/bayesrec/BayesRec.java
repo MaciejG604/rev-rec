@@ -11,7 +11,7 @@ import muni.fi.revrec.recommendation.ReviewerRecommendationBase;
 import org.eclipse.recommenders.jayes.BayesNet;
 import org.eclipse.recommenders.jayes.BayesNode;
 import org.eclipse.recommenders.jayes.inference.IBayesInferer;
-import org.eclipse.recommenders.jayes.inference.jtree.JunctionTreeAlgorithm;
+import org.eclipse.recommenders.jayes.inference.junctionTree.JunctionTreeAlgorithm;
 import org.eclipse.recommenders.jayes.util.NumericalInstabilityException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
